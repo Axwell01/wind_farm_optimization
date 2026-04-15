@@ -9,7 +9,12 @@ import pandas as pd
 import numpy as np
 import pulp
 import warnings
+from pathlib import Path
+
 warnings.filterwarnings('ignore')
+
+DATA_FILE = Path(__file__).resolve().parent / "Wind_farm_data.xlsx"
+OUTPUT_FILE = Path(__file__).resolve().parent / "ACAES_Optimized_Dispatch.csv"
 
 # ─────────────────────────────────────────────
 # 1. SYSTEM PARAMETERS (from Excel)
@@ -42,9 +47,15 @@ PROJECT_LIFETIME     = 30        # years
 # ─────────────────────────────────────────────
 print("Loading data...")
 
+if not DATA_FILE.exists():
+    raise FileNotFoundError(
+        f"Data file not found: {DATA_FILE}.\n"
+        "Place Wind_farm_data.xlsx next to script.py or update DATA_FILE."
+    )
+
 # Spot prices (15-min → hourly)
 df_spot = pd.read_excel(
-    '/mnt/user-data/uploads/Wind_farm_data.xlsx',
+    DATA_FILE,
     sheet_name='Spot', index_col=0, header=0
 ).iloc[1:]
 df_spot.index = pd.to_datetime(df_spot.index, dayfirst=True, errors='coerce')
@@ -54,7 +65,7 @@ prices = df_spot['SE4 [€]'].resample('h').first().ffill()
 
 # Wind speeds (hourly)
 df_wind = pd.read_excel(
-    '/mnt/user-data/uploads/Wind_farm_data.xlsx',
+    DATA_FILE,
     sheet_name='Hourly Wind Data', skiprows=3, index_col=0
 )
 df_wind.index = pd.to_datetime(df_wind.index, errors='coerce')
@@ -155,9 +166,9 @@ for t in range(T):
     prob += charge_var[t]    <= CHARGE_POWER_MW    * b_charge[t]
     prob += discharge_var[t] <= DISCHARGE_POWER_MW * (1 - b_charge[t])
 
-    # RULE: Always charge when price < 0
+    # RULE: Avoid discharge when price < 0; charging is allowed if storage capacity exists
     if price < 0:
-        prob += charge_var[t] == min(CHARGE_POWER_MW, STORAGE_CAPACITY_MWh)
+        prob += b_charge[t] == 1
         prob += discharge_var[t] == 0
 
 # End SoC ≥ 0 (already handled by variable bounds)
@@ -293,5 +304,5 @@ results_df = pd.DataFrame({
     'Opt_Discharge_MW':   opt_discharge,
     'Opt_SoC_MWh':        opt_soc,
 })
-results_df.to_csv('/mnt/user-data/outputs/ACAES_Optimized_Dispatch.csv', index=False)
-print("\nDispatch results saved to ACAES_Optimized_Dispatch.csv")
+results_df.to_csv(OUTPUT_FILE, index=False)
+print(f"\nDispatch results saved to {OUTPUT_FILE.name}")
